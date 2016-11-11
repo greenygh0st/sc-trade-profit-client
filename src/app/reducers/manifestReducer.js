@@ -5,10 +5,7 @@ import * as graph from '../util/graph';
 import * as c from '../constants';
 
 // Cache a jump point graph.
-let pointGraph = new graph.Graph();
-c.pointsGraph.forEach((edge) => {
-    pointGraph.addEdge(edge[0], edge[1]);
-});
+let pointGraph = graph.createGraphFromEdgeNodes(c.pointsGraph);
 
 function calculateResults(state) {
     let clone = assign({}, state);
@@ -98,8 +95,11 @@ function setShip(state, action) {
 // Calculate a path to the chosen jump point using an undirected cyclic graph.
 function calculateSystemPath(clone) {
     if (clone.origin !== '' && clone.destination !== '') {
-        clone.path = graph.shortestPath(pointGraph, parseFloat(clone.origin), parseFloat(clone.destination));
-        clone.scope.jumps = clone.path.length;
+        let shortest = graph.shortestPath(pointGraph, clone.origin, clone.destination);
+        if (shortest !== null) {
+            clone.path = shortest.path || [];
+            clone.scope.jumps = shortest.cost;
+        }
     }
 
     return clone;
@@ -124,14 +124,26 @@ function updateScopeValue(state, action) {
 }
 
 function calculateCrewCut(clone) {
-    let totalCut = 0;
+    let totalCut   = 0;
+    let baseProfit = clone.scope.totalSell - clone.scope.totalBuy;
 
-    clone.crew.forEach((crew) => {
+    clone.crew = clone.crew.map((crew) => {
         let cut = parseFloat(crew.cut);
+
+        // If the crew cut type is a percentage, re-calculate it.
+        if (crew.type === 'percentage') {
+            cut = Math.round(cut/100 * baseProfit);
+        }
+
+        crew.estimate = cut;
+
         if (Number.isNaN(cut) === false) {
             totalCut -= cut;
         }
+
+        return crew;
     });
+
 
     clone.scope.crewCut = totalCut;
     return clone;
@@ -140,8 +152,10 @@ function calculateCrewCut(clone) {
 function addCrew(state) {
     let clone = assign({}, state);
     clone.crew.push({
-        name: 'Crew Member #'+(clone.crew.length+1),
-        cut:  0
+        name:     'Crew Member #'+(clone.crew.length+1),
+        cut:      0,
+        estimate: 0,
+        type:     'uec'
     });
 
     return calculateCrewCut(calculateResults(clone));
@@ -150,13 +164,19 @@ function addCrew(state) {
 function removeCrew(state, action) {
     let clone = assign({}, state);
     clone.crew.splice(action.index, 1);
-    return calculateCrewCut(calculateResults(clone));
+    return calculateResults(calculateCrewCut(clone));
 }
 
 function updateCrew(state, action) {
     let clone = assign({}, state);
     clone.crew[action.index][action.prop] = action.value;
-    return calculateCrewCut(calculateResults(clone));
+    return calculateResults(calculateCrewCut(clone));
+}
+
+function updateCrewType(state, action) {
+    let clone = assign({}, state);
+    clone.crew[action.index].type = action.cutType;
+    return calculateResults(calculateCrewCut(clone));
 }
 
 export default function manifestReducer(state = {}, action) {
@@ -183,6 +203,8 @@ export default function manifestReducer(state = {}, action) {
         return removeCrew(state, action);
     case 'CREW_UPDATE':
         return updateCrew(state, action);
+    case 'CREW_TYPE':
+        return updateCrewType(state, action);
     default:
         return state;
     }
